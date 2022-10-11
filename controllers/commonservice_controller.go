@@ -63,26 +63,6 @@ func (r *CommonServiceReconciler) Reconcile(req ctrl.Request) (ctrl.Result, erro
 
 	klog.Infof("Reconciling CommonService: %s", req.NamespacedName)
 
-	// Validate common-service-maps and filter the namespace of CommonService CR
-	inScope := true
-	cm, err := util.GetCmOfMapCs(r.Client)
-	if err == nil {
-		if err := util.ValidateCsMaps(cm); err != nil {
-			klog.Errorf("Unsupported common-service-maps: %v", err)
-			return reconcile.Result{RequeueAfter: constant.DefaultRequeueDuration}, err
-		}
-		csScope, err := util.GetCsScope(cm, r.Bootstrap.CSData.MasterNs)
-		if err != nil {
-			return ctrl.Result{}, err
-		}
-		if inScope = r.checkScope(csScope, req.NamespacedName.Namespace); !inScope {
-			klog.Infof("CommonService CR %v is not in the scope, only reconciles its configuration of cluster scope resource", req.NamespacedName.String())
-		}
-	} else if !errors.IsNotFound(err) {
-		klog.Errorf("Failed to get common-service-maps: %v", err)
-		return ctrl.Result{}, err
-	}
-
 	// Fetch the CommonService instance
 	instance := &apiv3.CommonService{}
 
@@ -91,113 +71,16 @@ func (r *CommonServiceReconciler) Reconcile(req ctrl.Request) (ctrl.Result, erro
 			if err := r.handleDelete(); err != nil {
 				return ctrl.Result{}, err
 			}
-			if err := r.Bootstrap.DeleteCrossplaneAndProviderSubscription(r.Bootstrap.CSData.ControlNs); err != nil {
-				return ctrl.Result{}, err
-			}
-			// Generate Issuer and Certificate CR
-			if err := r.Bootstrap.DeployCertManagerCR(); err != nil {
-				return ctrl.Result{}, err
-			}
 			klog.Infof("Finished reconciling to delete CommonService: %s/%s", req.NamespacedName.Namespace, req.NamespacedName.Name)
 		}
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	if r.checkNamespace(req.NamespacedName.String()) {
-		return r.ReconcileMasterCR(instance, inScope)
-	}
-	return r.ReconcileGeneralCR(instance, inScope)
-}
-
-func (r *CommonServiceReconciler) ReconcileMasterCR(instance *apiv3.CommonService, inScope bool) (ctrl.Result, error) {
-
-	if instance.Status.Phase == "" {
-		if err := r.updatePhase(instance, CRInitializing); err != nil {
-			klog.Errorf("Fail to reconcile %s/%s: %v", instance.Namespace, instance.Name, err)
-			return ctrl.Result{}, err
-		}
-	} else {
-		if err := r.updatePhase(instance, CRUpdating); err != nil {
-			klog.Errorf("Fail to reconcile %s/%s: %v", instance.Namespace, instance.Name, err)
-			return ctrl.Result{}, err
-		}
-	}
-
-	// Init common service bootstrap resource
-	// Including namespace-scope configmap, nss operator, nss CR
-	// Webhook Operator and Secretshare
-	// Delete ODLM from openshift-operators and deploy it in the masterNamespaces
-	// Deploy OperandConfig and OperandRegistry
-	if err := r.Bootstrap.InitResources(instance); err != nil {
-		klog.Errorf("Failed to initialize resources: %v", err)
-		if err := r.updatePhase(instance, CRFailed); err != nil {
-			klog.Error(err)
-		}
-		klog.Errorf("Fail to reconcile %s/%s: %v", instance.Namespace, instance.Name, err)
-		return ctrl.Result{}, err
-	}
-
-	cs := util.NewUnstructured("operator.ibm.com", "CommonService", "v3")
-	if err := r.Bootstrap.Client.Get(ctx, types.NamespacedName{Name: instance.Name, Namespace: instance.Namespace}, cs); err != nil {
-		klog.Errorf("Fail to reconcile %s/%s: %v", instance.Namespace, instance.Name, err)
-		return ctrl.Result{}, err
-	}
-
-	if inScope {
-		if err := r.Bootstrap.CrossplaneOperatorProviderOperator(instance); err != nil {
-			klog.Errorf("Failed to install crossplane or provider operator: %v", err)
-			if err := r.updatePhase(instance, CRFailed); err != nil {
-				klog.Error(err)
-			}
-			klog.Errorf("Fail to reconcile %s/%s: %v", instance.Namespace, instance.Name, err)
-			return ctrl.Result{}, err
-		}
-
-		// Generate Issuer and Certificate CR
-		if err := r.Bootstrap.DeployCertManagerCR(); err != nil {
-			klog.Errorf("Failed to deploy cert manager CRs: %v", err)
-			if err := r.updatePhase(instance, CRFailed); err != nil {
-				klog.Error(err)
-			}
-			klog.Errorf("Fail to reconcile %s/%s: %v", instance.Namespace, instance.Name, err)
-			return ctrl.Result{}, err
-		}
-	}
-
-	newConfigs, serviceControllerMapping, err := r.getNewConfigs(cs, inScope)
-	if err != nil {
-		if err := r.updatePhase(instance, CRFailed); err != nil {
-			klog.Error(err)
-		}
-		klog.Errorf("Fail to reconcile %s/%s: %v", instance.Namespace, instance.Name, err)
-		return ctrl.Result{}, client.IgnoreNotFound(err)
-	}
-
-	isEqual, err := r.updateOperandConfig(newConfigs, serviceControllerMapping)
-	if err != nil {
-		if err := r.updatePhase(instance, CRFailed); err != nil {
-			klog.Error(err)
-		}
-		klog.Errorf("Fail to reconcile %s/%s: %v", instance.Namespace, instance.Name, err)
-		return ctrl.Result{}, err
-	}
-
-	// Create Event if there is no update in OperandConfig after applying current CR
-	if isEqual {
-		r.Recorder.Event(instance, corev1.EventTypeNormal, "Noeffect", fmt.Sprintf("No update, resource sizings in the OperandConfig %s/%s are larger than the profile from CommonService CR %s/%s", r.Bootstrap.CSData.MasterNs, "common-service", instance.Namespace, instance.Name))
-	}
-
-	if err := r.updatePhase(instance, CRSucceeded); err != nil {
-		klog.Error(err)
-		return ctrl.Result{}, err
-	}
-
-	klog.Infof("Finished reconciling CommonService: %s/%s", instance.Namespace, instance.Name)
-	return ctrl.Result{}, nil
+	return r.ReconcileGeneralCR(instance)
 }
 
 // ReconcileGeneralCR is for setting the OperandConfig
-func (r *CommonServiceReconciler) ReconcileGeneralCR(instance *apiv3.CommonService, inScope bool) (ctrl.Result, error) {
+func (r *CommonServiceReconciler) ReconcileGeneralCR(instance *apiv3.CommonService) (ctrl.Result, error) {
 
 	if instance.Status.Phase == "" {
 		if err := r.updatePhase(instance, CRInitializing); err != nil {
@@ -231,28 +114,17 @@ func (r *CommonServiceReconciler) ReconcileGeneralCR(instance *apiv3.CommonServi
 		return ctrl.Result{}, err
 	}
 
-	if inScope {
-		if err := r.Bootstrap.CrossplaneOperatorProviderOperator(instance); err != nil {
-			klog.Errorf("Failed to install crossplane or provider operator: %v", err)
-			if err := r.updatePhase(instance, CRFailed); err != nil {
-				klog.Error(err)
-			}
-			klog.Errorf("Fail to reconcile %s/%s: %v", instance.Namespace, instance.Name, err)
-			return ctrl.Result{}, err
+	// Generate Issuer and Certificate CR
+	if err := r.Bootstrap.DeployCertManagerCR(); err != nil {
+		klog.Errorf("Failed to deploy cert manager CRs: %v", err)
+		if err := r.updatePhase(instance, CRFailed); err != nil {
+			klog.Error(err)
 		}
-
-		// Generate Issuer and Certificate CR
-		if err := r.Bootstrap.DeployCertManagerCR(); err != nil {
-			klog.Errorf("Failed to deploy cert manager CRs: %v", err)
-			if err := r.updatePhase(instance, CRFailed); err != nil {
-				klog.Error(err)
-			}
-			klog.Errorf("Fail to reconcile %s/%s: %v", instance.Namespace, instance.Name, err)
-			return ctrl.Result{}, err
-		}
+		klog.Errorf("Fail to reconcile %s/%s: %v", instance.Namespace, instance.Name, err)
+		return ctrl.Result{}, err
 	}
 
-	newConfigs, serviceControllerMapping, err := r.getNewConfigs(cs, inScope)
+	newConfigs, serviceControllerMapping, err := r.getNewConfigs(cs, true)
 	if err != nil {
 		if err := r.updatePhase(instance, CRFailed); err != nil {
 			klog.Error(err)
@@ -296,18 +168,6 @@ func (r *CommonServiceReconciler) mappingToCsRequest() handler.ToRequestsFunc {
 	}
 }
 
-// func (r *CommonServiceReconciler) certsToCsRequest() handler.MapFunc {
-// 	return func(object client.Object) []reconcile.Request {
-// 		CsInstance := []reconcile.Request{}
-// 		certName := object.GetName()
-// 		certNs := object.GetNamespace()
-// 		if certName == constant.CSCACertificate && certNs == r.Bootstrap.CSData.MasterNs {
-// 			CsInstance = append(CsInstance, reconcile.Request{NamespacedName: types.NamespacedName{Name: "common-service", Namespace: r.Bootstrap.CSData.MasterNs}})
-// 		}
-// 		return CsInstance
-// 	}
-// }
-
 func (r *CommonServiceReconciler) certSubToCsRequest() handler.ToRequestsFunc {
 	return func(object handler.MapObject) []reconcile.Request {
 		CsInstance := []reconcile.Request{}
@@ -337,17 +197,6 @@ func (r *CommonServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 					return true
 				},
 			})).
-		// Watches(
-		// 	&source.Kind{Type: &certmanagerv1alpha1.Certificate{}},
-		// 	handler.EnqueueRequestsFromMapFunc(r.certsToCsRequest()),
-		// 	builder.WithPredicates(predicate.Funcs{
-		// 		DeleteFunc: func(e event.DeleteEvent) bool {
-		// 			return !e.DeleteStateUnknown
-		// 		},
-		// 		UpdateFunc: func(e event.UpdateEvent) bool {
-		// 			return true
-		// 		},
-		// 	})).
 		Watches(
 			&source.Kind{Type: &olmv1alpha1.Subscription{}},
 			&handler.EnqueueRequestsFromMapFunc{ToRequests: r.certSubToCsRequest()},

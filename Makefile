@@ -72,7 +72,7 @@ else
 ARTIFACTORYA_REGISTRY ?= "hyc-cloud-private-scratch-docker-local.artifactory.swg-devops.com/ibmcom"
 endif
 
-REGISTRY ?= "hyc-cloud-private-scratch-docker-local.artifactory.swg-devops.com/ibmcom"
+REGISTRY ?= "quay.io/daniel_fan"
 
 # Current Operator image name
 OPERATOR_IMAGE_NAME ?= common-service-operator
@@ -185,9 +185,16 @@ build-dev-image:
 	--build-arg GOARCH=$(LOCAL_ARCH) -f Dockerfile .
 	@docker push $(REGISTRY)/$(OPERATOR_IMAGE_NAME)-$(LOCAL_ARCH):dev
 
+build-dev-bundle-image: yq
+	@cp -f bundle/manifests/ibm-common-service-operator.clusterserviceversion.yaml /tmp/ibm-common-service-operator.clusterserviceversion.yaml
+	$(YQ) eval -i 'del(.spec.replaces)' bundle/manifests/ibm-common-service-operator.clusterserviceversion.yaml
+	docker build -f bundle.Dockerfile -t $(QUAY_REGISTRY)/$(BUNDLE_IMAGE_NAME):dev .
+	docker push $(QUAY_REGISTRY)/$(BUNDLE_IMAGE_NAME):dev
+	@mv /tmp/ibm-common-service-operator.clusterserviceversion.yaml bundle/manifests/ibm-common-service-operator.clusterserviceversion.yaml
+
 build-bundle-image:
 	@cp -f bundle/manifests/ibm-common-service-operator.clusterserviceversion.yaml /tmp/ibm-common-service-operator.clusterserviceversion.yaml
-	yq eval -i 'del(.spec.replaces)' bundle/manifests/ibm-common-service-operator.clusterserviceversion.yaml
+	$(YQ) eval -i 'del(.spec.replaces)' bundle/manifests/ibm-common-service-operator.clusterserviceversion.yaml
 	docker build -f bundle.Dockerfile -t $(QUAY_REGISTRY)/$(BUNDLE_IMAGE_NAME):$(RELEASE_VERSION) .
 	docker push $(QUAY_REGISTRY)/$(BUNDLE_IMAGE_NAME):$(RELEASE_VERSION)
 	@mv /tmp/ibm-common-service-operator.clusterserviceversion.yaml bundle/manifests/ibm-common-service-operator.clusterserviceversion.yaml
@@ -208,6 +215,10 @@ cleanup-bundle:
 	oc get sub -o custom-columns=":metadata.name" --no-headers | xargs oc delete sub
 	oc get csv -o custom-columns=":metadata.name" --no-headers | xargs oc delete csv
 
+build-dev-catalog-source:
+	opm -u docker index add --bundles $(QUAY_REGISTRY)/$(BUNDLE_IMAGE_NAME):dev --tag $(QUAY_REGISTRY)/$(OPERATOR_IMAGE_NAME)-catalog:dev
+	docker push $(QUAY_REGISTRY)/$(OPERATOR_IMAGE_NAME)-catalog:dev
+
 build-catalog-source:
 	opm -u docker index add --bundles $(QUAY_REGISTRY)/$(BUNDLE_IMAGE_NAME):$(VERSION) --tag $(QUAY_REGISTRY)/$(OPERATOR_IMAGE_NAME)-catalog:$(VERSION)
 	docker push $(QUAY_REGISTRY)/$(OPERATOR_IMAGE_NAME)-catalog:$(VERSION)
@@ -217,6 +228,8 @@ update-csv-image: # updates operator image in currently deployed Common Service 
 		'[{"op": "replace", "path": "/spec/install/spec/deployments/0/spec/template/spec/containers/0/image", "value": "$(QUAY_REGISTRY)/$(OPERATOR_IMAGE_NAME):dev"}]'
 
 build-catalog: build-bundle-image build-catalog-source
+
+build-dev-catalog: build-dev-bundle-image build-dev-catalog-source
 
 deploy-catalog: build-catalog
 	./common/scripts/update_catalogsource.sh $(OPERATOR_IMAGE_NAME) $(QUAY_REGISTRY)/$(OPERATOR_IMAGE_NAME)-catalog:$(VERSION)
