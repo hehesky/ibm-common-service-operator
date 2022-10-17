@@ -25,7 +25,7 @@ metadata:
     createdAt: "2020-10-19T21:38:33Z"
     description: The IBM Common Service Operator is used to deploy IBM Common Services
     nss.operator.ibm.com/managed-operators: cloud-native-postgresql
-    olm.skipRange: ">=3.3.0 <3.22.0"
+    olm.skipRange: ">=3.3.0 <3.19.6"
     operatorChannel: v3.22
     operatorVersion: 3.22.0
     operators.operatorframework.io/builder: operator-sdk-v1.7.1+git
@@ -37,7 +37,7 @@ metadata:
     operatorframework.io/arch.ppc64le: supported
     operatorframework.io/arch.s390x: supported
     operatorframework.io/os.linux: supported
-  name: ibm-common-service-operator.v3.22.0
+  name: ibm-common-service-operator.v3.19.6
   namespace: placeholder
 spec:
   apiservicedefinitions: {}
@@ -122,7 +122,7 @@ spec:
 
     ## Operator versions
 
-     - 3.22.0
+     - 3.19.6
 
     ## Prerequisites
 
@@ -467,7 +467,7 @@ spec:
       type: OwnNamespace
     - supported: true
       type: SingleNamespace
-    - supported: false
+    - supported: true
       type: MultiNamespace
     - supported: true
       type: AllNamespaces
@@ -485,7 +485,7 @@ spec:
   provider:
     name: IBM
   relatedImages:
-    - image: icr.io/cpopen/common-service-operator:3.22.0
+    - image: icr.io/cpopen/common-service-operator:3.19.6
       name: COMMON_SERVICE_OPERATOR_IMAGE
     - image: icr.io/cpopen/cpfs/ibm-cs-webhook:1.18.0
       name: IBM_CS_WEBHOOK_IMAGE
@@ -493,4 +493,4 @@ spec:
       name: IBM_SECRETSHARE_OPERATOR_IMAGE
     - image: icr.io/cpopen/multi-instance-conversion:1.0.0
       name: CS_MULTI_INSTANCE_CONVERSION_IMAGE
-  version: 3.22.0
+  version: 3.19.6
