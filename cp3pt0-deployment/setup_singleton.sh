@@ -115,21 +115,22 @@ function install_cert_manager() {
     if [ $? -eq 0 ]; then
         warning "There is a cert-manager Subscription already\n"
         return 0
+    elif [ $SKIP_INSTALL -eq 1 ]; then
+        warning "There is no cert-manager Subscription installed\n"
+        exit 1
     fi
 
     pods_exist=$(${OC} get pods -A | grep -w cert-manager-webhook)
     if [ $? -eq 0 ]; then
         warning "There is a cert-manager-webhook pod Running, so most likely another cert-manager is already installed\n"
         return 0
+    elif [ $SKIP_INSTALL -eq 1 ]; then
+        warning "There is no cert-manager-webhook pod running\n"
+        exit 1
     fi
 
     if [ $ENABLE_PRIVATE_CATALOG -eq 1 ]; then
         SOURCE_NS="ibm-cert-manager"
-    fi
-
-    if [ $SKIP_INSTALL -eq 1 ]; then
-        wait_for_operator "ibm-cert-manager" "ibm-cert-manager-operator" 6 # only wait 1 min by retrying 6 times
-        return
     fi
 
     create_namespace ibm-cert-manager
@@ -149,15 +150,13 @@ function install_licensing() {
     if [ $? -eq 0 ]; then
         warning "There is an ibm-licensing-operator Subscription already\n"
         return 0
+    elif [ $SKIP_INSTALL -eq 1 ]; then
+        warning "There is no ibm-licensing-operator Subscription installed\n"
+        exit 1
     fi
 
     if [ $ENABLE_PRIVATE_CATALOG -eq 1 ]; then
         SOURCE_NS="ibm-licensing"
-    fi
-
-    if [ $SKIP_INSTALL -eq 1 ]; then
-        wait_for_operator "ibm-licensing" "ibm-licensing-operator" 6 # only wait 1 min by retrying 6 times
-        return
     fi
 
     create_namespace ibm-licensing
